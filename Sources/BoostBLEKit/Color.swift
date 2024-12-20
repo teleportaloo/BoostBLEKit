@@ -8,7 +8,7 @@
 
 import Foundation
 
-public enum Color: UInt8 {
+public enum Color: UInt8, CaseIterable {
     
     case black      = 0x00
     case pink       = 0x01
