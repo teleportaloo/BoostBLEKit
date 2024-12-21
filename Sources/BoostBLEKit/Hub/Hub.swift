@@ -21,6 +21,10 @@ public protocol Hub {
     
     func motorStartPowerCommand(port: Port, power: Int8) -> Command?
     func rgbLightColorCommand(color: Color) -> Command?
+    func rgbLightColorSensorCommand(port: Port, color: Color) -> Command?
+    func motorStartSpeedTimeCommand(port: Port, time: UInt16, speed: Int8, maxPower: UInt8) -> Command?
+    func motorStartSpeedForDegreesCommand(port: Port, degrees: Int32, speed: Int8, maxPower: UInt8) -> Command?
+    func motorGotoAbsolutePositionCommand(port: Port, absPos: Int32, speed: Int8, maxPower: UInt8) -> Command?
     
     func subscribeCommand(portId: PortId) -> Command?
     func unsubscribeCommand(portId: PortId) -> Command?
@@ -40,6 +44,14 @@ public extension Hub {
         return ioType.canSupportMotorStartPowerCommand
     }
     
+    func motorStartSpeedTimeCommand(port: Port, time: UInt16, speed: Int8, maxPower: UInt8) -> Command? {
+        guard let portId = portId(for: port) else { return nil }
+        guard let ioType = connectedIOs[portId] else { return nil }
+        guard ioType.canSupportMotorStartPowerCommand else { return nil }
+        
+        return MotorStartSpeedTimeCommand(portId: portId, time: time, speed: speed, maxPower: maxPower)
+    }
+    
     func motorStartPowerCommand(port: Port, power: Int8) -> Command? {
         guard let portId = portId(for: port) else { return nil }
         guard let ioType = connectedIOs[portId] else { return nil }
@@ -54,6 +66,43 @@ public extension Hub {
         return RGBLightColorCommand(portId: portId, color: color)
     }
     
+    func rgbLightColorSensorCommand(port: Port, color: Color) -> Command? {
+        guard let portId = portId(for: port) else { return nil }
+        guard let ioType = connectedIOs[portId] else { return nil }
+        guard ioType == .colorAndDistanceSensor else { return nil }
+        
+        // If the port is not the HUb's port it has to be Mode 5
+        return RGBLightColorCommand(colorSensorPortId: portId, color: color)
+    }
+    
+    func motorStartSpeedForDegreesCommand(port: Port, degrees: Int32, speed: Int8, maxPower: UInt8) -> Command? {
+        guard let portId = portId(for: port) else { return nil }
+        guard let ioType = connectedIOs[portId] else { return nil }
+        guard ioType.canSupportMotorStartPowerCommand else { return nil }
+        
+        
+        return MotorStartSpeedForDegreesCommand(portId: portId, degrees: degrees, speed: speed, maxPower: maxPower)
+        
+    }
+    
+    func motorGotoAbsolutePositionCommand(port: Port, absPos: Int32, speed: Int8, maxPower: UInt8) -> Command? {
+        guard let portId = portId(for: port) else { return nil }
+        guard let ioType = connectedIOs[portId] else { return nil }
+        guard ioType.canSupportMotorStartPowerCommand else { return nil }
+        
+        return MotorGotoAbsolutePosition(portId: portId, absPos: absPos, speed: speed, maxPower: maxPower)
+    }
+    
+    func subscribeCommand(portId: PortId,  mode:UInt8) -> Command? {
+        return PortInputFormatSetupCommand(portId: portId, mode: mode, subscribe: true)
+    }
+    
+    func unsubscribeCommand(portId: PortId, mode:UInt8) -> Command? {
+        guard let mode = connectedIOs[portId]?.defaultSensorMode else { return nil }
+        
+        return PortInputFormatSetupCommand(portId: portId, mode: mode, subscribe: false)
+    }
+
     func subscribeCommand(portId: PortId) -> Command? {
         guard let mode = connectedIOs[portId]?.defaultSensorMode else { return nil }
         
