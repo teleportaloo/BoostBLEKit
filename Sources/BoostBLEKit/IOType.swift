@@ -8,7 +8,9 @@
 
 import Foundation
 
-public enum IOType: Equatable {
+public typealias SensorData = (a: Int32, b: Int32, c: Int32)
+
+public enum IOType: Equatable, Hashable {
     
     case mediumMotor                // 0x01 (1)
     case trainMotor                 // 0x02 (2)
@@ -32,6 +34,10 @@ public enum IOType: Equatable {
     case mediumAngularMotor         // 0x30 (48)
     case largeAngularMotor          // 0x31 (49)
     case powerControlButton         // 0x37 (55)
+    case poweredUpImuAccelerometer  // 0x39 (57)    // ARW
+    case poweredUpImuGyro           // 0x3A (58)    // ARW
+    case poweredUpImuPosition       // 0x3B (59)    // ARW
+    case poweredUpImuTemperature    // 0x3C (60)
     case colorSensor                // 0x3d (61)
     case distanceSensor             // 0x3e (62)
     case forceSensor                // 0x3f (63)
@@ -93,6 +99,14 @@ extension IOType {
             self = .largeAngularMotor
         case 0x37:
             self = .powerControlButton
+        case 0x39:
+            self = .poweredUpImuAccelerometer
+        case 0x3A:
+            self = .poweredUpImuGyro
+        case 0x3B:
+            self = .poweredUpImuPosition
+        case 0x3C:
+            self = .poweredUpImuTemperature
         case 0x3d:
             self = .colorSensor
         case 0x3e:
@@ -127,6 +141,172 @@ extension IOType {
         }
     }
     
+    public var motorAbsPosition: Bool {
+            switch self {
+            case .interactiveMotor, .builtInMotor,  .largeMotor, .extraLargeMotor, .mediumAngularMotor, .largeAngularMotor, .smallAngularMotor, .mediumAngularMotorGray, .largeAngularMotorGray:
+                return true
+            default:
+                return false
+            }
+        }
+        
+        public func equivalent(to: IOType) -> Bool {
+            if self == to {
+                return true
+            }
+            
+            if self.motorAbsPosition && to.motorAbsPosition {
+                return true
+            }
+            
+            return false
+        }
+        
+        static func int16Le(bytes : inout [UInt8], offset: Int) -> Int16 {
+            return Int16(bytes[offset]) + Int16(bytes[offset+1]) << 8
+        }
+        
+        public func dataConverterClosure(subType: Int) ->  ((_: Data) -> SensorData?)? {
+            switch self {
+            case .poweredUpImuAccelerometer:
+                return { (data: Data) -> SensorData? in
+                    guard data.count > 5 else { return nil }
+                    var bytes = [UInt8](data)
+                    // Measured in mG
+                    let x = Int32( Float(IOType.int16Le(bytes: &bytes, offset: 0)) / 4.096);
+                    let y = Int32( Float(IOType.int16Le(bytes: &bytes, offset: 2)) / 4.096);
+                    let z = Int32( Float(IOType.int16Le(bytes: &bytes, offset: 4)) / 4.096);
+                    return (a:x,b:y,c:z)
+                }
+            case .poweredUpImuGyro:
+                return { (data: Data) -> SensorData? in
+                    guard data.count > 5 else { return nil}
+                    var bytes = [UInt8](data)
+                    // Measured in DPS - degrees per second.
+                    let x = Int32((Int(IOType.int16Le(bytes: &bytes, offset: 0)) * 7) / 400)
+                    let y = Int32((Int(IOType.int16Le(bytes: &bytes, offset: 2)) * 7) / 400)
+                    let z = Int32((Int(IOType.int16Le(bytes: &bytes, offset: 4)) * 7) / 400)
+                    return (a:x,b:y,c:z)
+                }
+            case .poweredUpImuPosition:
+                return { (data: Data) -> SensorData? in
+                    guard data.count > 5 else { return nil }
+                    var bytes = [UInt8](data)
+                    // Measured in degrees
+                    var z = IOType.int16Le(bytes: &bytes, offset: 0)
+                    let x = IOType.int16Le(bytes: &bytes, offset: 2)
+                    let y = IOType.int16Le(bytes: &bytes, offset: 4)
+                    
+                    // workaround for calibration problem or bug in technicMediumHub firmware 1.1.00.0000
+                    if (y == 90 || y == -90) {
+                        z = (y < 0 ? -1 : 1 ) * (z + 180)
+                        if (z > 180)  { z -= 360 }
+                        if (z < -180) {z += 360 }
+                    }
+                    return (a:Int32(x),b:Int32(y),c:Int32(z))
+                }
+            case .builtInTiltSensor:
+                return { (data: Data) -> SensorData? in
+                    guard data.count > 1 else { return nil }
+                    let bytes = [UInt8](data)
+                    
+                    let x = Int8(bitPattern: bytes[0])
+                    let y = Int8(bitPattern: bytes[1])
+                    
+                    return (a:Int32(x),b:Int32(y), c:0)
+                }
+            case .tiltSensor:
+                return { (data: Data) -> SensorData? in
+                    guard data.count > 1 else { return nil }
+                    let bytes = [UInt8](data)
+                    
+                    let x : Int32 = Int32(Int8(bitPattern: bytes[0])) * 2
+                    let y : Int32 = Int32(Int8(bitPattern: bytes[1])) * 2
+                    
+                    return (a:x,b:y, c:0)
+                }
+            case .colorAndDistanceSensor:
+                return { (data: Data) -> SensorData? in
+                    guard data.count > 2 else { return nil }
+                    guard subType < 4 else { return nil}
+                    guard subType <= data.count else { return nil }
+                    
+                    
+                    let bytes = [UInt8](data)
+                    
+                    if (subType  == 0) {
+                        return (a: Int32(bytes[subType]), b:0, c:0)
+                    }
+                    
+                    var distance = Double(bytes[1])
+                    let partial = Double(bytes[3])
+                    
+                    if (partial > 0) {
+                        // print(partial)
+                        distance +=  1.0 / partial;
+                    }
+                    var result: UInt8
+                    
+                    var mm = ((Float(distance) * 25.4) - 20)
+                    if mm < 0 {
+                        mm = 0
+                    }
+                    if (mm < 255) {
+                        result = UInt8(mm)
+                    } else {
+                        result = 255
+                    }
+                    
+                    return (a: Int32(result), b:0, c:0)
+                }
+            case .poweredUpImuTemperature:
+                return { (data: Data) -> SensorData? in
+                    guard data.count > 1 else { return nil }
+                    var bytes = [UInt8](data)
+                    return (a: Int32(IOType.int16Le(bytes: &bytes, offset: 0)), b:0, c:0)
+                }
+            case .interactiveMotor, .builtInMotor,  .largeMotor, .extraLargeMotor, .mediumAngularMotor, .largeAngularMotor, .smallAngularMotor, .mediumAngularMotorGray, .largeAngularMotorGray:
+                return { (data: Data) -> SensorData? in
+                    guard data.count > 1 else { return nil }
+                    var bytes = [UInt8](data)
+                    
+                    let p = IOType.int16Le(bytes: &bytes, offset: 0)
+                    
+                    // print("\(bytes[0]) \(bytes[1]) \(p) \(bytes.count)")
+                    return (a: Int32(p), b:0, c:0)
+                }
+            default:
+                return nil
+            }
+        }
+        
+        public func closeEnoughClosure() ->  ((_: SensorData, _: SensorData) -> Bool)? {
+            switch self {
+            case .poweredUpImuPosition, .poweredUpImuGyro, .poweredUpImuAccelerometer:
+                return { (lhs: SensorData, rhs: SensorData) -> Bool in
+                    return abs(Int(lhs.a) - Int(rhs.a)) < 2 && abs(Int(lhs.b) - Int(rhs.b)) < 2 && abs(Int(lhs.c) - Int(rhs.c)) < 2
+                }
+            case .colorAndDistanceSensor:
+                return { (lhs: SensorData, rhs: SensorData) -> Bool in
+                    return lhs.a == rhs.a
+                }
+            case .tiltSensor, .builtInTiltSensor:
+                return { (lhs: SensorData, rhs: SensorData) -> Bool in
+                    return abs(Int(lhs.a) - Int(rhs.a)) < 2 && abs(Int(lhs.b) - Int(rhs.b)) < 2
+                }
+            case .poweredUpImuTemperature:
+                return { (lhs: SensorData, rhs: SensorData) -> Bool in
+                    abs(Int(lhs.a) - Int(rhs.a)) < 20
+                }
+            case .interactiveMotor, .builtInMotor,  .largeMotor, .extraLargeMotor, .mediumAngularMotor, .largeAngularMotor, .smallAngularMotor, .mediumAngularMotorGray, .largeAngularMotorGray:
+                return { (lhs: SensorData, rhs: SensorData) -> Bool in
+                    abs(Int(lhs.a) - Int(rhs.a)) < 2
+                }
+            default:
+                return nil
+            }
+        }
+    
     public var defaultSensorMode: UInt8? {
         switch self {
         case .mediumMotor:
@@ -144,7 +324,7 @@ extension IOType {
         case .rgbLight:
             return 0 // Not working on Boost and Powered Up
         case .tiltSensor:
-            return 1 // 0: Tilt (x,y), 1: 2D Orientation, 2: Impact Count?? (3 bytes) 3: Tilt (x,y,z)
+            return 0 // ARW // 0: Tilt (x,y), 1: 2D Orientation, 2: Impact Count?? (3 bytes) 3: Tilt (x,y,z)
         case .motionSensor:
             return 0 // 0: Distance, 1: Count, 2: ?? (6 bytes)
         case .colorAndDistanceSensor:
@@ -154,7 +334,7 @@ extension IOType {
         case .builtInMotor:
             return 2 // 0: ??, 1: Speed, 2: Position
         case .builtInTiltSensor:
-            return 2 // 0: Tilt (x,y), 1: 2D Orientation, 2: 3D Orientation, 3: Impact Count, 4: Tilt (x,y,z)
+            return 0 // 0: Tilt (x,y), 1: 2D Orientation, 2: 3D Orientation, 3: Impact Count, 4: Tilt (x,y,z)
         case .trainBaseMotor:
             return nil
         case .trainBaseSpeaker:
@@ -164,7 +344,7 @@ extension IOType {
         case .trainBaseSpeedometer:
             return 0 // 0: Speed, 1: Distance
         case .largeMotor:
-            return 3 // 0: ??, 1: Speed, 2: Position, 3: Absolute Position
+            return 2 // 0: ??, 1: Speed, 2: Position, 3: Absolute Position
         case .extraLargeMotor:
             return 3 // 0: ??, 1: Speed, 2: Position, 3: Absolute Position
         case .mediumAngularMotor:
@@ -172,7 +352,7 @@ extension IOType {
         case .largeAngularMotor:
             return 3 // 0: ??, 1: Speed, 2: Position, 3: Absolute Position
         case .powerControlButton:
-            return nil
+            return 0 // ARW
         case .colorSensor:
             return 0 // 0: Color
         case .distanceSensor:
@@ -193,6 +373,15 @@ extension IOType {
             return 3 // 0: ??, 1: Speed, 2: Position, 3: Absolute Position
         case .largeAngularMotorGray:
             return 3 // 0: ??, 1: Speed, 2: Position, 3: Absolute Position
+        case .poweredUpImuAccelerometer:
+            return 0
+        case .poweredUpImuGyro:
+            return 0
+        case .poweredUpImuPosition:
+            return 0   // 0: tilt 1, Impact Count
+        case .poweredUpImuTemperature:
+            return 0
+            
         case .unknown:
             return nil
         }
@@ -267,6 +456,14 @@ extension IOType: CustomStringConvertible {
             return "Medium Angular Motor (Gray)"
         case .largeAngularMotorGray:
             return "Large Angular Motor (Gray)"
+        case .poweredUpImuAccelerometer: // ARW
+            return "Powered Up IMU Accelerometer"
+        case .poweredUpImuGyro: // ARW
+            return "Powered Up IMU Gyro"
+        case .poweredUpImuPosition: // ARW
+            return "Powered Up IMU Position"
+        case .poweredUpImuTemperature: // ARW
+            return "Powered Up IMU Temperature"
         case .unknown(let ioType):
             return String(format: "Unknown IO Type (0x%02x)", ioType)
         }
