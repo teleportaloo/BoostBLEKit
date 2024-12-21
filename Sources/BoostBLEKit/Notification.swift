@@ -62,12 +62,12 @@ extension Notification: CustomStringConvertible {
         case .hubProperty(let hubProperty, let value):
             return "\(hubProperty): \(value)"
         case .connected(let portId, let ioType):
-            return "Connected \(ioType) into Port \(portId.hexString)"
+            return "Connected \(ioType) into Port 0x\(portId.hexString)"
         case .disconnected(let portId):
-            return "Disconnected an I/O from Port \(portId.hexString)"
+            return "Disconnected an I/O from Port 0x\(portId.hexString)"
         case .sensorValue(let portId, let value):
             let hex = value.map { $0.hexString }.joined(separator: " ")
-            return "Sensor value [\(hex)] from Port \(portId.hexString)"
+            return "Sensor value [\(hex)] from Port 0x\(portId.hexString)"
         }
     }
 }
