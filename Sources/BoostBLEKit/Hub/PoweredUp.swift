@@ -17,7 +17,7 @@ public final class PoweredUp {
         public var connectedIOs: [PortId : IOType] = [
             0x32: .rgbLight,
             0x3b: .currentSensor,
-            0x3c: .voltageSensor,
+            0x3c: .voltageSensor
         ]
         
         public let portMap: [Port: PortId] = [
@@ -35,9 +35,20 @@ public final class PoweredUp {
             0x00: .powerControlButton,
             0x01: .powerControlButton,
             0x34: .rgbLight,
-            0x3b: .voltageSensor,
+            0x3b: .voltageSensor
         ]
         
-        public let portMap: [Port: PortId] = [:]
+        public var powerControlButtonMap: [PowerControlButtonStateId : PowerControlButtonState] = [
+            0x01  : .Plus,
+            0x7F  : .Stop,
+            0xFF  : .Minus,
+            0x00  : .Released,
+        ]
+        
+        public let portMap: [Port: PortId] = [
+            .A:     0x00,
+            .B:     0x01,
+            .AB:    0x39,
+        ]
     }
 }
